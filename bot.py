@@ -191,6 +191,20 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return WAITING_PHOTO
 
 
+async def handle_video_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "That's a video — please upload a photo of your receipt instead."
+    )
+    return WAITING_PHOTO
+
+
+async def handle_unsupported_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Please upload a photo of your receipt (not a file, audio clip, or sticker)."
+    )
+    return WAITING_PHOTO
+
+
 async def handle_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip().lower()
     if text != "done":
@@ -224,6 +238,15 @@ async def handle_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MANUAL_FIX
 
     context.user_data["extracted"] = extracted
+
+    if not extracted.get("is_receipt", True):
+        context.user_data["receipt_bytes"] = []
+        note = extracted.get("notes")
+        message = "That doesn't look like a receipt — please upload a different photo."
+        if note:
+            message += f" ({note})"
+        await update.message.reply_text(message)
+        return WAITING_PHOTO
 
     vendor = extracted.get("vendor") or "unknown"
     date = extracted.get("date") or "unknown"
@@ -449,7 +472,7 @@ async def check_stale_requests(context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- /pay — dues and trip payments (separate flow, separate sheet tab) ----------
 
-PAY_ASK_NAME, PAY_ASK_PURPOSE, PAY_ASK_AMOUNT, PAY_ASK_METHOD = range(300, 304)
+PAY_ASK_NAME, PAY_ASK_PURPOSE, PAY_ASK_TRIP_NAME, PAY_ASK_AMOUNT_BUTTONS, PAY_ASK_AMOUNT_TEXT, PAY_ASK_METHOD = range(300, 306)
 
 
 async def pay_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -483,16 +506,48 @@ async def pay_ask_purpose(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     purpose = query.data.replace("payp_", "", 1)
     context.user_data["pay_purpose"] = purpose
+    await query.edit_message_text(f"Purpose: {purpose}")
 
+    if purpose == "Trip Payment":
+        await query.message.reply_text(
+            "Please enter which trip this payment is for (e.g. \"Fall Canoeing Trip\")."
+        )
+        return PAY_ASK_TRIP_NAME
+
+    # Dues keeps the fixed $15/$20 buttons
     keyboard = InlineKeyboardMarkup(
         [[InlineKeyboardButton(f"${a}", callback_data=f"paya_{a}")] for a in config.PAYMENT_AMOUNTS]
     )
-    await query.edit_message_text(f"Purpose: {purpose}")
     await query.message.reply_text("Please select the amount paid.", reply_markup=keyboard)
-    return PAY_ASK_AMOUNT
+    return PAY_ASK_AMOUNT_BUTTONS
 
 
-async def pay_ask_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def pay_ask_trip_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    trip_name, error = _validate_purpose(update.message.text)
+    if error:
+        await update.message.reply_text(error)
+        return PAY_ASK_TRIP_NAME
+
+    context.user_data["pay_trip_name"] = trip_name
+    await update.message.reply_text("Please enter the amount paid, e.g. 24.99.")
+    return PAY_ASK_AMOUNT_TEXT
+
+
+async def pay_ask_amount_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    amount, error = _validate_amount(update.message.text)
+    if error:
+        await update.message.reply_text(error)
+        return PAY_ASK_AMOUNT_TEXT
+
+    context.user_data["pay_amount"] = amount
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton(m, callback_data=f"paym_{m}")] for m in config.PAYMENT_METHODS]
+    )
+    await update.message.reply_text("Please select the payment method.", reply_markup=keyboard)
+    return PAY_ASK_METHOD
+
+
+async def pay_ask_amount_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     amount = query.data.replace("paya_", "", 1)
@@ -513,11 +568,18 @@ async def pay_ask_method(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["pay_method"] = method
     await query.edit_message_text(f"Payment method: {method}")
 
+    purpose = context.user_data.get("pay_purpose")
+    trip_name = context.user_data.get("pay_trip_name")
+    # Fold the trip name into Purpose (e.g. "Trip Payment - Fall Canoeing
+    # Trip") instead of adding a new sheet column, matching the same
+    # no-schema-disruption approach used elsewhere in this bot.
+    display_purpose = f"{purpose} - {trip_name}" if trip_name else purpose
+
     payment_data = {
         "member_chat_id": update.effective_chat.id,
         "member_name": context.user_data.get("pay_member_name"),
         "telegram_name": context.user_data.get("pay_telegram_name", "Unknown"),
-        "purpose": context.user_data.get("pay_purpose"),
+        "purpose": display_purpose,
         "amount": context.user_data.get("pay_amount"),
         "payment_method": method,
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -754,6 +816,11 @@ def main():
             ASK_CATEGORY: [CallbackQueryHandler(ask_category, pattern="^cat_")],
             WAITING_PHOTO: [
                 MessageHandler(filters.PHOTO, handle_photo),
+                MessageHandler(filters.VIDEO | filters.ANIMATION, handle_video_upload),
+                MessageHandler(
+                    filters.Document.ALL | filters.AUDIO | filters.VOICE | filters.Sticker.ALL,
+                    handle_unsupported_upload,
+                ),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_done),
             ],
             CONFIRM_DATA: [CallbackQueryHandler(confirm_data, pattern="^confirm_")],
@@ -772,7 +839,9 @@ def main():
         states={
             PAY_ASK_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, pay_ask_name)],
             PAY_ASK_PURPOSE: [CallbackQueryHandler(pay_ask_purpose, pattern="^payp_")],
-            PAY_ASK_AMOUNT: [CallbackQueryHandler(pay_ask_amount, pattern="^paya_")],
+            PAY_ASK_TRIP_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, pay_ask_trip_name)],
+            PAY_ASK_AMOUNT_BUTTONS: [CallbackQueryHandler(pay_ask_amount_buttons, pattern="^paya_")],
+            PAY_ASK_AMOUNT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, pay_ask_amount_text)],
             PAY_ASK_METHOD: [CallbackQueryHandler(pay_ask_method, pattern="^paym_")],
         },
         fallbacks=[
