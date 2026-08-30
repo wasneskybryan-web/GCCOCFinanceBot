@@ -51,7 +51,7 @@ _ROAST_MESSAGES = [
     "I'm going to need you to stop contributing to the conversation.",
     "Respectfully, please return to silence.",
     "You've had enough speaking privileges for today.",
-    "That's fascinating. Now shut the fuck up.",
+    "That's fascinating. Now shut up.",
     "I say this with the utmost respect: nobody asked.",
     "Your microphone privileges have been revoked.",
     "Please enjoy the exciting new experience of not talking.",
@@ -1195,7 +1195,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 _OBAMA_PHOTO_URL = "https://commons.wikimedia.org/wiki/Special:FilePath/Official_portrait_of_Barack_Obama.jpg"
 
 
-async def obama_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def nigga_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_photo(chat_id=update.effective_chat.id, photo=_OBAMA_PHOTO_URL)
     except Exception:
@@ -1287,7 +1287,7 @@ def main():
     app.add_handler(CommandHandler("approve", approve_command))
     app.add_handler(CommandHandler("deny", deny_command))
     app.add_handler(CommandHandler("broadcast", broadcast_command))
-    app.add_handler(CommandHandler("obama", obama_command))
+    app.add_handler(CommandHandler("nigga", nigga_command))
     app.add_handler(CallbackQueryHandler(status, pattern="^postaction_status$"))
     app.add_handler(CallbackQueryHandler(postaction_done, pattern="^postaction_done$"))
     app.add_handler(conv_handler)
