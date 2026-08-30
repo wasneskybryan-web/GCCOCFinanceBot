@@ -51,7 +51,7 @@ _ROAST_MESSAGES = [
     "I'm going to need you to stop contributing to the conversation.",
     "Respectfully, please return to silence.",
     "You've had enough speaking privileges for today.",
-    "That's fascinating. Now shut the fuck up.",
+    "That's fascinating. Now shut up.",
     "I say this with the utmost respect: nobody asked.",
     "Your microphone privileges have been revoked.",
     "Please enjoy the exciting new experience of not talking.",
